@@ -1,95 +1,47 @@
-# VortexScript research notes
+# Research Record
 
-Research snapshot: September 2026.
+Snapshot: 2026-09-04.
 
-This file records the external constraints behind the architecture so performance decisions do not turn into folklore later.
+This file records constraints used by the foundation patch. External projects are references only; VortexScript remains independently implemented and MIT licensed.
+
+## Vortex3D integration reference
+
+`Arctic403/Vortex3d` is treated as read-only. VortexScript copies only compatibility contracts needed to stay integration-ready:
+
+- portable C++20 engine boundary;
+- stable typed 64-bit persistent IDs;
+- command/transaction mutation path;
+- Android ARMv7 + ARM64 support;
+- scripts/automation/AI eventually sharing the reflected command system.
+
+VortexScript does not modify or require that repository.
 
 ## Android native boundary
 
-Android's JNI documentation says to minimize the amount of marshalling across JNI and the frequency of JNI crossings. It also recommends keeping the JNI layer small and concentrated. That strongly favors VortexScript submitting compiled plans or large jobs rather than making one managed/native call per mesh operation.
+Android JNI guidance recommends minimizing marshalling and the number of managed/native crossings. VortexScript therefore produces coarse validated plans instead of encouraging one JNI call per low-level mesh operation.
 
 Source: https://developer.android.com/ndk/guides/jni-tips
 
-**Decision:** Kotlin is the UI/lifecycle host. VortexScript compile/execute and large 3D data live on the native side. Cross the boundary with handles, direct/native buffers, commands, and coarse progress updates.
+## Android 16 KB pages
 
-## Vulkan on Android
+Android 15 introduced 16 KB page-size devices. Current Android guidance says native apps should rebuild for 16 KB support; NDK r28+ uses 16 KB ELF alignment by default. Google Play requires 16 KB compatibility for apps targeting Android 15+ on 64-bit devices, with enforcement for updates tightening in 2027.
 
-Android documents Vulkan as its primary low-level graphics API and says it provides optimal performance for games/custom engines that implement their own renderer.
+Source: https://developer.android.com/guide/practices/page-sizes
 
-Source: https://developer.android.com/games/develop/vulkan/native-engine-support
+VortexScript CI therefore links an Android `.so` smoke library and inspects ELF `LOAD` alignment rather than treating target compilation alone as sufficient evidence.
 
-**Decision:** make Vulkan the primary APK backend. Keep VortexScript renderer-neutral so a web backend can target WebGPU and fallback paths can exist without changing scripts.
+## Android target API
 
-## Precision and memory bandwidth
+Google Play's current policy requires new apps and updates to target Android 16 (API 36) or higher from August 31, 2026. VortexScript itself is a native library, so target-SDK selection belongs to the APK host; the library's NDK compile API level is a separate minimum-platform decision.
 
-Android's Vulkan guidance notes that appropriate reduced-precision formats can improve cache efficiency, memory bandwidth, power use, throughput, and RAM use. It also warns that half precision is not automatically faster and capability/algorithm behavior must be measured.
+Source: https://developer.android.com/google/play/requirements/target-sdk
 
-Source: https://developer.android.com/games/optimize/vulkan-reduced-precision
+## glTF
 
-**Decision:** `precision half` is a policy hint, never a blind source-level guarantee. The Android backend decides whether a resource/kernel is safe and profitable to lower to 16-bit.
+glTF 2.0 defines a right-handed system with +Y up, +Z forward, -X right, meters, and radians. It is an interchange/runtime format, not VortexScript's native authoring coordinate contract.
 
-## Sustained mobile performance
+Source: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html
 
-Android's game optimization guidance exposes ADPF/performance hints, thermal APIs, memory advice, Game Mode, and profiling tools specifically because peak performance is not sustainable performance on mobile.
+## Parser/runtime choice
 
-Sources:
-- https://developer.android.com/games/optimize/overview
-- https://developer.android.com/games/optimize/power
-
-**Decision:** job scheduling and preview quality will eventually accept a device policy. Heavy geometry/texture jobs should reduce concurrency or quality under thermal pressure instead of forcing throttling.
-
-## Frame pacing
-
-Android's Frame Pacing library (Swappy) supports OpenGL and Vulkan and is designed to prevent buffer stuffing, inconsistent frame timing, and unnecessary display updates.
-
-Source: https://developer.android.com/games/sdk/frame-pacing/
-
-**Decision:** viewport presentation belongs in the Android renderer backend. It should not leak into normal VortexScript asset code.
-
-## Rust targets
-
-The Rust project currently lists both `aarch64-linux-android` and `wasm32-unknown-unknown` with standard-library support. This makes a single Rust compiler/runtime core practical for the APK and PWA paths.
-
-Source: https://doc.rust-lang.org/rustc/platform-support.html
-
-**Decision:** Rust owns the portable compiler/runtime foundation. Android gets a thin C/JNI bridge; web gets a WASM adapter.
-
-## Why not a dynamic embedded VM first?
-
-Wren is a useful comparison: it is an embeddable bytecode language with a fast host API, but its own documentation calls out the complexity introduced by dynamic typing and garbage-collected values crossing a native boundary. Wren also explains why bytecode VMs avoid the poor production performance of tree-walk interpreters.
-
-Sources:
-- https://wren.io/embedding/
-- https://wren.io/performance.html
-
-**Decision:** VortexScript will borrow the good idea—compile once to compact operations—but avoid a general dynamic object model and scripting GC in the hot path. Most expensive work is expressed as native jobs.
-
-## Parser strategy
-
-Tree-sitter is optimized for incremental parsing and can update syntax trees efficiently as text changes. Its runtime is designed to be embedded and robust under syntax errors.
-
-Source: https://tree-sitter.github.io/
-
-**Decision:** keep the tiny hand-written parser in the compiler core for now. Add a Tree-sitter grammar later for the Vortex3D code editor, syntax highlighting, incremental diagnostics, and navigation. The editor parser does not need to become the compiler parser.
-
-## Resulting architecture
-
-```text
-                    Vortex3D UI / AI
-                          |
-                 VortexScript source
-                          |
-                 compiler (Rust core)
-                          |
-               typed IR / job graph
-                          |
-               compact cached plan
-                    /           \
-                   /             \
-        Android native         Web WASM
-          job runtime           adapter
-              |                   |
-      Vulkan + CPU pools        WebGPU
-```
-
-The central optimization is not syntax. It is that high-level intent becomes a compact, analyzable job plan before execution.
+The compiler stays dependency-free and bounded. No parser generator, GC VM, JIT, filesystem capability, or general-purpose scripting runtime is required for the foundation. Editor incremental parsing can later be implemented separately without changing the authoritative compiler parser.

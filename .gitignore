@@ -1,5 +1,4 @@
-/target
-*.vxb
-.DS_Store
-.idea/
+build*/
 .vscode/
+.idea/
+.DS_Store

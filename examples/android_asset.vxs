@@ -1,17 +1,12 @@
-// VortexScript v0.1 foundation example
-model Tree {
-    import "tree.glb"
-
-    optimize android {
-        triangles <= 20000
-        texture <= 1024
-        lod 3
-        precision half
-        background_jobs true
+// Syntax fixture only. Real command names come from the host-provided schema.
+transaction MobileAsset {
+    command asset_import {
+        asset "tree.glb"
     }
 
-    material Bark {
-        roughness 0.8
-        metallic 0.0
+    command mesh_budget {
+        mesh mesh:42
+        triangles <= 20000
+        background true
     }
 }

@@ -1,65 +1,66 @@
 # VortexScript
 
-VortexScript is an Android-first 3D domain-specific language for Vortex3D.
+VortexScript is the bounded automation language frontend for Vortex3D.
 
-The goal is not to replace Rust, Kotlin, C++, or JavaScript. VortexScript describes 3D work at a high level, compiles it into a compact execution plan, and lets a platform backend perform the expensive work without bouncing thousands of tiny calls across platform boundaries.
+This repository is **standalone**. It does not modify, include, or require the Vortex3D repository to build. VortexScript compiles source into a validated command plan; a host adapter later maps that plan onto Vortex's existing command/transaction system.
 
-## Why this architecture
+```text
+VortexScript / AI macro
+        |
+ bounded C++20 frontend
+        |
+ host-reflected CommandSchema
+        |
+ validated command plan
+        |
+ host adapter -> Vortex commands/transactions
+```
 
-- **Android first:** compile whole jobs, then execute them inside the native runtime.
-- **One core:** the compiler/runtime is Rust so the same core can target Android native and `wasm32-unknown-unknown` for the PWA.
-- **No GC in the language core:** predictable allocations and no scripting garbage collector in frame-sensitive work.
-- **Typed 3D vocabulary:** models, materials, optimization budgets, LODs, textures, and future mesh operations become language concepts instead of generic dynamic objects.
-- **Compact plans:** source text is parsed once; execution uses interned strings and compact operations.
-- **Backend neutral:** Vulkan/Android and WebGPU/web backends can consume the same compiled plan.
+## Hardened v0.1 foundation
 
-## Foundation syntax
+- dependency-free portable C++20 core;
+- strict UTF-8 source handling;
+- stable diagnostic codes + byte spans;
+- exact numeric spelling (no silent float narrowing);
+- typed 64-bit entity references;
+- bounded source/tokens/strings/commands/arguments;
+- average O(1) string interning;
+- bounds-checked string lookup;
+- schema-based semantic validation;
+- deterministic lowering;
+- no persistent bytecode compatibility debt yet;
+- no filesystem/network/process/JNI/Vulkan authority in the compiler core;
+- GCC + Clang warnings-as-errors;
+- ASan + UBSan;
+- deterministic 10,000-input malformed-source stress test;
+- Android ARMv7 + ARM64 cross-compiles;
+- real Android shared-library link smoke and 16 KB ELF-alignment gate.
+
+## Syntax
 
 ```vortex
-model Tree {
-    import "tree.glb"
-
-    optimize android {
-        triangles <= 20000
-        texture <= 1024
-        lod 3
-        precision half
+transaction MobileAsset {
+    command asset_import {
+        asset "tree.glb"
     }
 
-    material Bark {
-        roughness 0.8
-        metallic 0.0
+    command mesh_budget {
+        mesh mesh:42
+        triangles <= 20000
+        background true
     }
 }
 ```
 
-The current foundation implements:
+The command names above are fixture examples. Production command names/types are supplied by the host's reflected schema instead of being duplicated inside VortexScript.
 
-- lexer with source spans and diagnostics
-- parser for `model`, `import`, `optimize`, and `material`
-- literals: numbers, strings, booleans, and identifiers
-- `=`, `<=`, and concise set syntax
-- interned-string intermediate representation
-- deterministic binary plan encoding (`VXS1`)
-- backend execution interface
-- tiny CLI for checking and compiling `.vxs` files
-- native-friendly Rust core with a WASM CI target
-
-## CLI
+## Build
 
 ```bash
-cargo run -p vortex-script -- check examples/android_asset.vxs
-cargo run -p vortex-script -- compile examples/android_asset.vxs
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVORTEX_SCRIPT_BUILD_TESTS=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+./build/vortex-script check examples/android_asset.vxs
 ```
 
-The second command writes `examples/android_asset.vxb` unless an output path is supplied.
-
-## Direction
-
-VortexScript source should stay ergonomic while the runtime gets increasingly data-oriented. The intended Android path is:
-
-`VortexScript -> parser -> typed/validated IR -> execution plan -> native job system -> Vulkan/CPU workers`
-
-The Kotlin UI should submit large jobs instead of individual mesh operations. This keeps JNI traffic low and leaves geometry buffers on the native side.
-
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design decisions and Android optimization plan.
+Read `docs/V0_1_AUDIT.md` before expanding semantics.

@@ -1,142 +1,56 @@
-# VortexScript architecture
+# VortexScript Architecture
 
-## Mission
+VortexScript is a bounded automation frontend for Vortex3D. It is deliberately not a second modeling engine, renderer, VM, filesystem layer, or Android runtime.
 
-VortexScript is a domain-specific command language for Vortex3D. Its performance advantage should come from restricting the problem: the compiler understands 3D operations and can turn them into predictable jobs instead of executing arbitrary dynamic script behavior.
-
-## Core pipeline
-
-1. **Lex** source into tokens with byte spans.
-2. **Parse** tokens into a small AST.
-3. **Validate/type** Vortex concepts (next milestone).
-4. **Lower** the AST into an interned execution plan.
-5. **Encode/cache** the plan as deterministic `VXS1` bytecode when desired.
-6. **Execute** the plan against a platform backend.
-
-The source language is deliberately separated from backend APIs. A script should not contain Vulkan handles, JNI objects, DOM objects, or WebGPU objects.
-
-## Android design rules
-
-### 1. JNI is a control boundary, not a data pipeline
-
-Android's JNI guidance recommends minimizing both marshalling and the frequency of crossings. Vortex3D should therefore submit a compiled plan or a small number of large native jobs, not vertices, faces, or modifier calls one-by-one.
-
-Planned Android shape:
-
-`Kotlin UI -> compile/submit -> native Vortex runtime -> worker queues -> Vulkan + native geometry kernels`
-
-Large mesh/texture buffers should stay native once imported. Kotlin should exchange handles, status, progress, and small metadata.
-
-Reference: https://developer.android.com/ndk/guides/jni-tips
-
-### 2. Vulkan is the primary Android renderer target
-
-Android currently documents Vulkan as the primary low-level graphics API and the optimal route for custom engines that need maximum rendering performance. VortexScript itself remains renderer-neutral; the Android backend maps render/compute jobs to Vulkan.
-
-Reference: https://developer.android.com/games/develop/vulkan/native-engine-support
-
-### 3. Optimize bandwidth, not only arithmetic
-
-Mobile GPUs are strongly constrained by memory bandwidth and thermals. Vortex optimization profiles should be able to request reduced precision, compact vertex layouts, texture compression, LOD budgets, and transient-memory reuse.
-
-Android specifically notes that appropriate 16-bit data can reduce memory bandwidth and RAM usage, while also warning that conversion overhead and device capabilities must be measured.
-
-Reference: https://developer.android.com/games/optimize/vulkan-reduced-precision
-
-### 4. Sustained performance beats benchmark spikes
-
-Vortex3D is an editor, so a device can spend minutes doing heavy work. The Android backend should adapt job concurrency and preview quality using thermal/performance signals instead of pinning the CPU/GPU at maximum load until throttling occurs.
-
-References:
-- https://developer.android.com/games/optimize/overview
-- https://developer.android.com/games/optimize/power
-
-### 5. Frame pacing matters even in an editor
-
-Interactive orbiting, sculpt previews, and viewport transforms need consistent frame delivery. Android's Frame Pacing library supports Vulkan and can reduce buffer stuffing/stutter. This belongs in the renderer backend, not in VortexScript syntax.
-
-Reference: https://developer.android.com/games/sdk/frame-pacing/
-
-## Runtime principles
-
-- No language-level reflection in hot paths.
-- No per-frame AST walking: parse once and lower once.
-- No requirement for a language garbage collector.
-- Strings are interned in plans.
-- Expensive operations become explicit jobs.
-- Backends own platform resources; scripts own logical handles only.
-- Immutable compiled plans are cacheable and safe to send to workers.
-- Device-specific optimization happens during lowering/backend execution, not by making source scripts device-specific everywhere.
-
-## Planned type system
-
-Foundation types:
-
-- `bool`
-- `i32`, `u32`, `f32`
-- `vec2`, `vec3`, `vec4`
-- `quat`, `mat4`
-- `mesh`, `material`, `texture`, `model`
-- typed resource handles
-
-The compiler should prefer 32-bit values by default on Android. Half precision should be an explicit optimization hint that is only applied where the backend verifies device support and acceptable error.
-
-## Planned execution model
-
-VortexScript should lower high-level operations into a job graph. A future example:
+## Pipeline
 
 ```text
-ImportMesh -> ValidateMesh -> GenerateTangents
-                         -> BuildLODs
-                         -> BuildCollision
-                         -> UploadGPU
+.vxs source / AI-generated macro
+            |
+       lexer + parser
+            |
+      bounded AST
+            |
+ host CommandSchema validation
+            |
+      typed command plan
+            |
+      adapter boundary
+            |
+ Vortex commands + transactions
 ```
 
-Independent jobs can run concurrently. The graph also gives Vortex3D a natural place for cancellation, progress reporting, caching, undo checkpoints, and AI-generated edit validation.
+The repository is standalone. It does not include or link Vortex3D source. Integration is by contract: the host provides a reflected `CommandSchema` and translates a validated `Plan` into its existing command/transaction APIs.
 
-## What VortexScript should not become
+## Non-negotiable rules
 
-- a general-purpose replacement for Rust/Kotlin/C++
-- a JIT-heavy dynamic language
-- a second renderer API
-- an API where every triangle edit crosses JNI
-- a syntax wrapper over giant untyped JSON objects
+1. The compiler does not own document or mesh state.
+2. The compiler cannot mutate Vortex3D directly.
+3. No Android, JNI, Vulkan, Web, renderer, filesystem, network, process, or shell authority exists in the portable core.
+4. Source parsing and lowering are bounded by explicit limits.
+5. Untrusted source must fail with diagnostics, never unchecked indexing or undefined behavior.
+6. User-visible persistent work remains source/host data; compiled plans are disposable.
+7. Command semantics come from a host-provided schema rather than duplicated hand-written engine behavior.
+8. Scripts and AI must use the same command/transaction surface as editor automation.
+9. Parallelism is a host/evaluation decision derived from dependencies; source cannot demand unsafe parallel execution.
+10. Raw pointers, native handles, Vulkan objects, JNI references, and filesystem paths are not persistent script values.
 
-Those directions would erase most of the Android advantage.
+## Why C++20
 
-## Milestones
+The frontend is dependency-free C++20 so an Android/native Vortex host can link it directly without adding another managed/native runtime boundary. A future web adapter can compile the same portable frontend separately if needed.
 
-### v0.1 foundation
+## Entity references
 
-- lexer/parser
-- AST
-- compact IR/plan
-- binary encoder
-- backend interface
-- CLI
-- Android/WASM build checks
+The foundation supports typed 64-bit entity references such as `mesh:42`. Zero is invalid. The entity kind is retained in the plan instead of becoming a naked integer.
 
-### v0.2 semantics
+These numeric references are document-bound. A future portable macro/query layer must use symbolic bindings or queries rather than pretending raw document IDs are globally portable.
 
-- typed values and symbol table
-- semantic diagnostics
-- resource handles
-- transform/mesh operation syntax
-- stable bytecode decoder + versioning rules
+## Command schema
 
-### v0.3 Android bridge
+`CommandSchema` is the integration seam. Each command defines argument names, types, requiredness, allowed comparison operators, and optional entity-kind constraints.
 
-- C ABI/JNI bridge
-- direct/native buffers
-- plan cache
-- worker/job system
-- cancellation and progress channel
+The compiler rejects unknown commands, unknown/duplicate/missing arguments, mismatched types, invalid comparison operators, and entity-kind mismatches before a plan can reach the host.
 
-### v0.4 graphics-aware optimization
+## No stable bytecode yet
 
-- Vulkan capability profile
-- LOD/mesh budgets
-- texture profile (ASTC/ETC2 fallback)
-- reduced-precision policy
-- thermal-aware quality policy
-- frame pacing hooks
+A stable binary instruction set is intentionally deferred until the engine command schema and cache versioning policy are mature. Freezing opcodes before semantics exist would manufacture compatibility debt.

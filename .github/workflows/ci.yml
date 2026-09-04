@@ -2,22 +2,102 @@ name: VortexScript CI
 
 on:
   push:
-    branches: [main, "foundation/**"]
+    branches: [main, "audit/**", "foundation/**"]
   pull_request:
 
 jobs:
-  test:
+  portable-boundary:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown, aarch64-linux-android
-      - name: Check workspace
-        run: cargo check --workspace --all-targets
-      - name: Test workspace
-        run: cargo test --workspace
-      - name: Check Android ARM64 core
-        run: cargo check -p vortex-script-core --target aarch64-linux-android
-      - name: Build WASM core
-        run: cargo build -p vortex-script-core --release --target wasm32-unknown-unknown
+      - uses: actions/checkout@v5
+      - run: python3 scripts/check_portability.py
+
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    env:
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVORTEX_SCRIPT_BUILD_TESTS=ON -DVORTEX_SCRIPT_WARNINGS_AS_ERRORS=ON
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
+      - run: ./build/vortex-script check examples/android_asset.vxs
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    env:
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v5
+      - run: >-
+          cmake -S . -B build-sanitize
+          -DCMAKE_BUILD_TYPE=Debug
+          -DVORTEX_SCRIPT_BUILD_TESTS=ON
+          -DVORTEX_SCRIPT_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - run: cmake --build build-sanitize --parallel
+      - name: Test under ASan/UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build-sanitize --output-on-failure
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    env:
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v5
+      - run: cmake -S . -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DVORTEX_SCRIPT_BUILD_TESTS=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: clang-tidy
+        run: |
+          mapfile -t SOURCES < <(find src -name '*.cpp' -print | sort)
+          clang-tidy "${SOURCES[@]}" -p build-tidy --quiet --warnings-as-errors='bugprone-*,performance-*,portability-*'
+
+  android:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: armeabi-v7a
+            pointer_bits: 32
+          - abi: arm64-v8a
+            pointer_bits: 64
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure Android ${{ matrix.abi }}
+        run: >-
+          cmake -S . -B build-android-${{ matrix.abi }}
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=${{ matrix.abi }}
+          -DANDROID_PLATFORM=android-26
+          -DVORTEX_SCRIPT_BUILD_TESTS=OFF
+          -DVORTEX_SCRIPT_BUILD_CLI=OFF
+          -DVORTEX_SCRIPT_WARNINGS_AS_ERRORS=ON
+          -DVORTEX_SCRIPT_EXPECT_POINTER_BITS=${{ matrix.pointer_bits }}
+      - run: cmake --build build-android-${{ matrix.abi }} --parallel
+      - name: Verify 16 KB ELF load alignment
+        run: |
+          so="$(find build-android-${{ matrix.abi }} -name 'libvortex_script_android_smoke.so' -print -quit)"
+          test -n "$so"
+          readelf="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$readelf" -lW "$so" | tee elf.txt
+          python3 - <<'PY'
+          import re
+          lines = open('elf.txt', encoding='utf-8').read().splitlines()
+          aligns = []
+          for line in lines:
+              if re.match(r'\s*LOAD\s', line):
+                  token = line.split()[-1]
+                  aligns.append(int(token, 16))
+          if not aligns or any(value < 0x4000 for value in aligns):
+              raise SystemExit(f'ELF LOAD alignment is not 16 KB compatible: {aligns}')
+          print('16 KB ELF alignment verified:', aligns)
+          PY
