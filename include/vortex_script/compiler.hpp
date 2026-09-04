@@ -16,6 +16,8 @@ struct CompileResult final {
     [[nodiscard]] bool ok() const noexcept { return diagnostics.empty(); }
 };
 
+[[nodiscard]] std::vector<Diagnostic> validateCommandSchema(const CommandSchema& schema);
+[[nodiscard]] std::vector<Diagnostic> validatePlan(const Plan& plan);
 [[nodiscard]] CompileResult compile(std::string_view source, const CommandSchema* schema = nullptr);
 
 } // namespace vortex_script

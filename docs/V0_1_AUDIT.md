@@ -8,14 +8,16 @@ Status: hardening patch.
 |---|---|
 | separate Rust runtime duplicated the native engine boundary | replaced with standalone portable C++20 frontend |
 | `f64` source values silently narrowed to `f32` | numeric lexemes retained exactly; type/range belongs to schema/host |
-| O(n²) string interning | hash-indexed average O(1) interner |
+| O(n²) string interning | hash-indexed average O(1) interner with allocation-free heterogeneous lookup |
 | unchecked string IDs could panic/index out of range | `Plan::string()` is bounds checked and returns `optional` |
 | no semantic validation | host `CommandSchema` validates command/argument/operator/entity contracts |
+| malformed/duplicate host schemas could become ambiguous | schema self-validation rejects duplicate/invalid command and argument definitions |
+| adapters had no way to validate mutated/corrupted plans | public `validatePlan()` checks contract version, structural limits, IDs, names, and value references |
 | premature `VXS1` persistent bytecode | removed; compiled plans are disposable until cache ABI is mature |
 | ARM64-only script compile check | ARMv7 + ARM64 NDK matrix with pointer-width validation |
 | target check did not prove Android linkability | CI links a real Android `.so` smoke target |
 | no 16 KB page-size gate | Android link target uses 16 KB ELF alignment and CI inspects it |
-| only minimal tests | expanded parsing/schema/bounds/UTF-8/entity/string/stress tests |
+| only minimal tests | expanded parsing/schema/bounds/UTF-8/entity/string/stress/boundary tests |
 | unknown string escapes silently accepted | rejected with stable diagnostics |
 | malformed UTF-8 not explicitly rejected | strict UTF-8 validation before tokenization |
 | unbounded input/plans | explicit source/token/string/transaction/command/argument/intern limits |

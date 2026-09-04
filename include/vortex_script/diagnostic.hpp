@@ -34,6 +34,8 @@ enum class DiagnosticCode : std::uint16_t {
     InvalidComparison,
     InvalidEntityRef,
     SchemaVersionMismatch,
+    InvalidSchema,
+    InvalidPlan,
 };
 
 [[nodiscard]] constexpr std::string_view diagnosticCodeName(const DiagnosticCode code) noexcept {
@@ -60,6 +62,8 @@ enum class DiagnosticCode : std::uint16_t {
         case DiagnosticCode::InvalidComparison: return "VXS020";
         case DiagnosticCode::InvalidEntityRef: return "VXS021";
         case DiagnosticCode::SchemaVersionMismatch: return "VXS022";
+        case DiagnosticCode::InvalidSchema: return "VXS023";
+        case DiagnosticCode::InvalidPlan: return "VXS024";
     }
     return "VXS000";
 }

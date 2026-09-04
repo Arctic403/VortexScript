@@ -132,6 +132,48 @@ void testDeterministicMalformedStress() {
     }
 }
 
+void testSchemaSelfValidation() {
+    auto schema = fixtureSchema();
+    assert(validateCommandSchema(schema).empty());
+
+    schema.commands.push_back(schema.commands.front());
+    auto diagnostics = validateCommandSchema(schema);
+    assert(!diagnostics.empty());
+    assert(diagnostics.front().code == DiagnosticCode::InvalidSchema);
+
+    schema = fixtureSchema();
+    schema.commands.front().arguments.push_back(schema.commands.front().arguments.front());
+    diagnostics = validateCommandSchema(schema);
+    assert(!diagnostics.empty());
+    assert(diagnostics.front().code == DiagnosticCode::InvalidSchema);
+}
+
+void testPlanValidation() {
+    auto result = compile("transaction T { command c { n 42 mesh mesh:7 } }");
+    assert(result.ok());
+    assert(validatePlan(result.plan).empty());
+
+    result.plan.transactions[0].commands[0].name = UINT32_MAX;
+    auto diagnostics = validatePlan(result.plan);
+    assert(!diagnostics.empty());
+    assert(diagnostics.front().code == DiagnosticCode::InvalidPlan);
+}
+
+void testCommandBoundary() {
+    std::string source = "transaction T {";
+    for (std::size_t i = 0; i < limits::kMaxCommands; ++i) source += " command c {}";
+    source += " }";
+    auto result = compile(source);
+    assert(result.ok());
+
+    source = "transaction T {";
+    for (std::size_t i = 0; i <= limits::kMaxCommands; ++i) source += " command c {}";
+    source += " }";
+    result = compile(source);
+    assert(!result.ok());
+    assert(result.diagnostics.front().code == DiagnosticCode::LimitExceeded);
+}
+
 void testContractSnapshot() {
     static_assert(kPersistentIdBits == 64);
     static_assert(kInvalidPersistentId == 0);
@@ -156,6 +198,9 @@ int main() {
     testSafeStringLookup();
     testBounds();
     testDeterministicMalformedStress();
+    testSchemaSelfValidation();
+    testPlanValidation();
+    testCommandBoundary();
     testContractSnapshot();
     std::cout << "VortexScript foundation tests passed\n";
     return 0;
