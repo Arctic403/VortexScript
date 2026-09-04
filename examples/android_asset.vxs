@@ -1,0 +1,17 @@
+// VortexScript v0.1 foundation example
+model Tree {
+    import "tree.glb"
+
+    optimize android {
+        triangles <= 20000
+        texture <= 1024
+        lod 3
+        precision half
+        background_jobs true
+    }
+
+    material Bark {
+        roughness 0.8
+        metallic 0.0
+    }
+}

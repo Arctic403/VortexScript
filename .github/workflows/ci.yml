@@ -1,0 +1,23 @@
+name: VortexScript CI
+
+on:
+  push:
+    branches: [main, "foundation/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, aarch64-linux-android
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Check Android ARM64 core
+        run: cargo check -p vortex-script-core --target aarch64-linux-android
+      - name: Build WASM core
+        run: cargo build -p vortex-script-core --release --target wasm32-unknown-unknown
